@@ -1,0 +1,38 @@
+#! /bin/sh
+# This assumes the following Mercurial directory layout:
+# /path/to/dir/<project>/<branch>/.hg
+# It will then create a shared Bazaar-NG repository at
+# /path/to/dir/<project>/.bzr
+# and convert the Mercurial brancht into a Bazaar-NG branch at
+# /path/to/dir/<project>/<branch>/.bzr
+# If this is successful, the .hg directory will be removed.
+
+
+die() {
+	echo "ERROR: $*" >& 2
+	exit 1
+}
+
+
+run() {
+	"$@" && return
+	die "Could not execute >>>$*<<<: return code ${?}!"
+}
+
+
+find -type d -name .hg | while read HG; do
+	HG=${HG%/.hg}
+	(
+		run cd "$HG"
+		run pushd ..
+		echo "Converting `pwd`..."
+		run bzr init-repo --rich-root-pack --no-trees .
+		run popd
+		run bzr init .
+		run bzr co
+		run bzr hg-import .
+		run bzr remove-tree
+		run bzr check
+		run rm -rf .hg
+	) || exit
+done
