@@ -1,10 +1,10 @@
 #! /bin/sh
 # This assumes the following Mercurial directory layout:
-# /path/to/dir/<project>/<branch>/.hg
+# /path/to/dir/<name>/<name>_<base35uuid>/.hg
 # It will then create a shared Bazaar-NG repository at
-# /path/to/dir/<project>/.bzr
+# /path/to/dir/<name>/.bzr
 # and convert the Mercurial brancht into a Bazaar-NG branch at
-# /path/to/dir/<project>/<branch>/.bzr
+# /path/to/dir/<name>/<name>_<base35uuid>/.bzr
 # If this is successful, the .hg directory will be removed.
 
 
@@ -20,14 +20,20 @@ run() {
 }
 
 
-find -type d -name .hg | while read HG; do
+# A true BASE-35 UUID will be 25 characters long.
+# However, due to incorrect copy/paste, sometimes
+# (intended) UUIDs are somewhat shorter.
+# So let's be a bit tolerant here.
+run find -regextype posix-egrep -type d \
+	-regex '.*/([^/]+)/\1_[0-9a-np-z]{23,25}/\.hg' \
+| while read HG; do
 	HG=${HG%/.hg}
 	(
 		run cd "$HG"
-		run pushd ..
+		run pushd .. > /dev/null
 		echo "Converting `pwd`..."
 		run bzr init-repo --rich-root-pack --no-trees .
-		run popd
+		run popd > /dev/null
 		run bzr init .
 		run bzr co
 		run bzr hg-import .
