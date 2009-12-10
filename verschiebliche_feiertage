@@ -1,0 +1,79 @@
+
+
+
+TARGET=
+if test -n "$1" && test $1 -gt 2000
+then
+	TARGET="$(easter "$1" | sed -e 's/ .*//')"
+	exec 250> "moveable_feasts_$1.ics"
+	NOW=`date -u -Iseconds | cut -c-19 | tr -d ":-"`Z
+	# See RFC 5545 for iCalender format details.
+	CRLF=`printf '\015\012:'`
+	CRLF=${CRLF%?}
+	ical() {
+		local INDENT
+		printf '%s\n' "$*" | fold -b75 | while IFS= read -r LINE
+		do
+			printf '%s%s%s' "$INDENT" "$LINE" "$CRLF"
+			INDENT=' '
+		done >& 250
+	}
+	UUID=${0##*/}-r6s9iaxxugt0r23gxhf94eq4p-`date -u +%Y%m%d%H%M%S`
+	ical BEGIN:VCALENDAR
+	ical VERSION:2.0
+fi
+EASTER_SUNDAY=`easter 2008 | sed -e "s/ .*//"`
+EASTER_DAY=`date -d $EASTER_SUNDAY +%-j`
+CMD='s/^\(.*[^ ]\)  *[A-Z][a-z]*  *\([0-9][0-9]\)\.\([0-9][0-9]\)\.'\
+'\([0-9][0-9][0-9][0-9]\)  *\([^ ].*\)$/\1:\4-\3-\2:\5/'
+{
+	COUNTER=0
+	while IFS= read HDY; do
+		DAY=`echo "$HDY" | sed -e "$CMD"`
+		NAME=${DAY%%:*}; DAY=${DAY#*:}
+		CMT=${DAY##*:}; DAY=${DAY%:*}
+		NAME="$NAME ($CMT)"
+		DAY=`date -d $DAY +%-j`
+		OFFSET=`expr $DAY - $EASTER_DAY`
+		test x$OFFSET = x${OFFSET#-} && OFFSET=+$OFFSET
+		RECALC=`date -d "$EASTER_SUNDAY $OFFSET days" +%Y-%m-%d`
+		echo "$OFFSET $RECALC"
+		echo "$NAME"
+		echo "Verschieblich."
+		echo "EASTER_SUNDAY=\$(easter \$(date +%Y) |" \
+			"sed -e 's/ .*//')"
+		echo "date -d \"\$EASTER_SUNDAY $OFFSET days\" +%Y-%m-%d"
+		echo
+		if test -n "$TARGET"
+		then
+			WHEN=`date -d "$TARGET $OFFSET days" +%Y%m%d`
+			ical BEGIN:VEVENT
+			ical "UID:$UUID-$COUNTER"
+			ical "DTSTAMP:$NOW"
+			ical "SUMMARY:$NAME"
+			ical "DESCRIPTION:$NAME"
+			ical "DTSTART;VALUE=DATE:$WHEN"
+			ical END:VEVENT
+			COUNTER=`expr $COUNTER + 1`
+		fi
+	done
+	if test -n "$TARGET"
+	then
+		ical END:VCALENDAR
+		exec 250>& -
+	fi
+} <<- 'EOF'
+Rosenmontag     Montag  04.02.2008      normaler Werktag
+Faschingsdienstag       Dienstag        05.02.2008      normaler Werktag
+Aschermittwoch  Mittwoch        06.02.2008      normaler Werktag
+Palmsonntag     Sonntag         16.03.2008      normaler Sonntag
+Gründonnerstag  Donnerstag      20.03.2008      kein offizieller Feiertag
+Karfreitag      Freitag         21.03.2008      normaler Werktag
+Karsamstag      Samstag         22.03.2008      normaler Samstag
+Ostern  Sonntag         23.03.2008      gesetzlicher Feiertag
+Ostermontag     Montag  24.03.2008      gesetzlicher Feiertag
+Christi Himmelfahrt     Donnerstag      01.05.2008      gesetzlicher Feiertag
+Pfingsten       Sonntag         11.05.2008      gesetzlicher Feiertag
+Pfingstmontag   Montag  12.05.2008      gesetzlicher Feiertag
+Fronleichnam    Donnerstag      22.05.2008      gesetzlicher Feiertag
+EOF
