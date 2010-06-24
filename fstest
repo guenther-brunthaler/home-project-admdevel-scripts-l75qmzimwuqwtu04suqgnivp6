@@ -17,7 +17,7 @@ TEST_FILE_PREFIX=file_
 TEST_FILE_SUFFIX=
 ADD_CFLAGS="-O3 -pipe -DNDEBUG -s"
 ADD_LDFLAGS="-lm"
-VERSION=10.175.1
+VERSION=10.175.2
 
 
 # Edit this function to add support for more filesystems.
@@ -288,31 +288,38 @@ split_results() {
 
 
 stat1() {
-	local BEST WORST VAL
-	LC_ALL=C run sort -k$1gr < "$RESULTS_FILE" > "$TMP_FILE"
-	BEST=`run head -n1 "$TMP_FILE" | run cut -d" " -f$1` || fail
-	WORST=`run tail -n1 "$TMP_FILE" | run cut -d" " -f$1` || fail
+	local BEST WORST VAL COL DIR TITLE
+	COL=$1 DIR=$2 TITLE=$3 BLBL=best WLBL=worst
+	test $DIR = A && VAL=r
+	set -- sort -k${COL}g$VAL
+	LC_ALL=C run "$@" < "$RESULTS_FILE" > "$TMP_FILE"
+	BEST=`run head -n1 "$TMP_FILE" | run cut -d" " -f$COL` || fail
+	WORST=`run tail -n1 "$TMP_FILE" | run cut -d" " -f$COL` || fail
+	test $DIR = D && {
+		VAL=$BEST; BEST=$WORST; WORST=$VAL
+		VAL=$BLBL; BLBL=$WLBL; WLBL=$VAL
+	}
 	run echo
-	run echo "$2 - direct values, from best to worst:"
+	run echo "$TITLE - direct values, from best to worst:"
 	while read
 	do
-		split_results $1; fmt_number "$VAL"
+		split_results $COL; fmt_number "$VAL"
 		run echo "$REPLY - $FS"
 	done < "$TMP_FILE"
 	run echo
-	run echo "$2 - as percentage of best:"
+	run echo "$TITLE - as percentage of $BLBL:"
 	while read
 	do
-		split_results $1
+		split_results $COL
 		system_bc "scale= 2; $VAL * 100 / $BEST"
 		fmt_number "$REPLY"
 		run echo "$REPLY % - $FS"
 	done < "$TMP_FILE"
 	run echo
-	run echo "$2 - as factor of worst:"
+	run echo "$TITLE - as factor of $WLBL:"
 	while read
 	do
-		split_results $1
+		split_results $COL
 		system_bc "scale= 2; $VAL / $WORST"
 		fmt_number "$REPLY"
 		run echo "$REPLY times - $FS"
@@ -491,7 +498,7 @@ do
 	inform "+++ Created $FILES files in $SECS seconds" \
 		"($SPEED files/second)."
 	inform "+++ Space usage efficiency is $SPEFF %."
-	echo $FS $SPEFF $SPEED >> "$RESULTS_FILE"
+	echo $FS $SPEFF $SPEED $FILES $SECS >> "$RESULTS_FILE"
 	free mnt
 	have fs && free fs
 done
@@ -508,8 +515,10 @@ inform "Summary of results:"
 	Total filesystem image size = $IMG_SIZE_MiB MiB.
 	Size of each generated file = $TEST_FILE_SIZE bytes.
 .
-	stat1 2 "space usage efficiency percentage"
-	stat1 3 "files / second"
+	stat1 4 A "number of files created"
+	stat1 5 D "required time (seconds)"
+	stat1 2 A "space usage efficiency (percent)"
+	stat1 3 A "files per second"
 	run cat <<- .
 
 	$APP (c) 2010 by Guenther Brunthaler.
