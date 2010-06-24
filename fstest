@@ -17,7 +17,7 @@ TEST_FILE_PREFIX=file_
 TEST_FILE_SUFFIX=
 ADD_CFLAGS="-O3 -pipe -DNDEBUG -s"
 ADD_LDFLAGS="-lm"
-VERSION=10.175
+VERSION=10.175.1
 
 
 # Edit this function to add support for more filesystems.
@@ -508,7 +508,7 @@ inform "Summary of results:"
 	Total filesystem image size = $IMG_SIZE_MiB MiB.
 	Size of each generated file = $TEST_FILE_SIZE bytes.
 .
-	stat1 2 "space usage efficiency"
+	stat1 2 "space usage efficiency percentage"
 	stat1 3 "files / second"
 	run cat <<- .
 
