@@ -1,0 +1,521 @@
+#! /bin/sh
+# File system benchmark.
+#
+# (c) 2010 by Guenther Brunthaler.
+#
+# This script is free software.
+# Distribution is permitted under the terms of the GPLv3.
+
+
+# Edit this to change the benchbarking characteristics.
+IMG_SIZE_MiB=660
+TEST_FILE_SIZE=2048
+STILL_ALIVE_MSG_INTERVAL=5
+
+# Edit the settings below only if you know what you are doing.
+TEST_FILE_PREFIX=file_
+TEST_FILE_SUFFIX=
+ADD_CFLAGS="-O3 -pipe -DNDEBUG -s"
+ADD_LDFLAGS="-lm"
+VERSION=10.175
+
+
+# Edit this function to add support for more filesystems.
+# No other functions should require any customization.
+enum_potential_filesystems() {
+	FS= KMOD= FCMD= FOPT= MOPT=
+	# Feel free to add more cases to the 'case' below!
+	# The case labels must be consecutive integers values.
+	# Each case must set $FS and may set any of the following:
+	# FCMD: command for formatting; defaults to "mkfs.$FS".
+	# FOPT: options used for formatting; default none.
+	# MOPT: additional mount options to use; default none.
+	# KMOD: name of kernel module for $FS; default $FS.
+	case $FS_INDEX in
+		1) FS=btrfs;;
+		2) FS=ext2;;
+		3) FS=ext3;;
+		4) FS=ext4;;
+		5) FS=minix;;
+		6) FS=reiserfs; FOPT="-q";;
+		7) FS=udf; FCMD=mkudffs; FOPT="--media-type=hd --utf8";;
+		8) FS=vfat;;
+	esac
+}
+
+
+fail() {
+	test -z "$UNWIND" && { false; exit; }
+	false
+}
+
+
+die() {
+	echo "ERROR: $*" >& 2
+	fail
+}
+
+
+cmd_failure() {
+	die "Command >>>$1<<< failed with return code $2!"
+}
+
+
+run() {
+	"$@" && return
+	cmd_failure "$*" $?
+}
+
+
+system() {
+	REPLY=`run "$@"` || fail
+}
+
+
+free() {
+	local RSRC
+	for RSRC
+	do
+		RSRCS="${RSRCS% $RSRC *} ${RSRCS#* $RSRC }"
+		release "$RSRC" || die "Could not release resource '$RSRC'!"
+	done
+}
+
+
+have() {
+	local RSRC
+	for RSRC
+	do
+		test x"${RSRCS% $RSRC *}" != x"$RSRCS" || return
+	done
+}
+
+
+free_all_but() {
+	local NOT RSRC
+	BUT=" $* "
+	set -- $RSRCS
+	for RSRC
+	do
+		test x"${BUT% $RSRC *}" != x"$BUT" && continue
+		free "$RSRC"
+	done
+}
+
+
+got() {
+	local RSRC
+	for RSRC
+	do
+		RSRCS=" $RSRC$RSRCS"
+	done
+}
+
+
+cleanup() {
+	UNWIND=1
+	free $RSRCS
+}
+
+
+RSRCS=" "
+UNWIND=
+trap cleanup 0
+
+
+# Should print "0" if loop device $1 is *really* unused.
+read_test() {
+	LC_ALL=C run dd if="$1" count=1 bs=1 2> /dev/null | run wc -c
+}
+
+
+inform() {
+	run printf '%s\n' "$*" >& 2
+}
+
+
+calc() {
+	local RC
+	set -- expr "$@"
+	REPLY=`"$@"`; RC=$?
+	case $RC in
+		0) ;;
+		1) false;;
+		*) cmd_failure "$@" "$RC";;
+	esac
+}
+
+
+retry() {
+	local C DELAY
+	C=$1; shift; DELAY=$1; shift
+	while test $C != 0
+	do
+		"$@" 2> /dev/null && return
+		calc $C - 1; C=$REPLY
+		sleep "$DELAY"
+	done
+	inform "WARNING: Command >>>$*<<< failed multiple times; ignoring."
+}
+
+
+release() {
+	case $1 in
+		mnt)
+			inform "Unmouting filesystem."
+			retry 3 2 umount "$MPOINT"
+			;;
+		fs)
+			inform "Unloading kernel module $KMOD."
+			retry 1 1 modprobe -r "$KMOD"
+			;;
+		loop)
+			inform "Detaching $FREE_LOOP."
+			retry 5 1 losetup -d "$FREE_LOOP"
+			;;
+		mpoint)
+			inform "Removing temporary mount point" \
+				"directory '$MPOINT'."
+			run rmdir "$MPOINT"
+			;;
+		results)
+			run rm "$RESULTS_FILE"
+			;;
+		bin)
+			inform "Removing $C_TITLE binary."
+			run rm "$C_BIN"
+			;;
+		src)
+			inform "Removing $C_TITLE source code."
+			run rm "$C_SRC"
+			;;
+		elog)
+			run rm "$ELOG_FILE"
+			;;
+		img)
+			inform "Removing image file '$IMG_FILE'!"
+			run rm "$IMG_FILE"
+			;;
+		tmp)
+			run rm "$TMP_FILE"
+			;;
+		*)
+			false;;
+	esac
+}
+
+
+have_command() {
+	which "$1" > /dev/null 2>& 1
+}
+
+
+have_fs() {
+	local FSF REST FSI
+	FSI="/proc/filesystems"
+	test -f "$FSI" || return
+	while read FSF REST
+	do
+		test x"$FSF" = x"$1" && return
+	done < "$FSI"
+	false
+}
+
+
+# Discard stdout output.
+# Display stderr output only in case of failure.
+quiet_run() {
+	"$@" > /dev/null 2> "$ELOG_FILE" && return
+	RC=$?
+	cat "$ELOG_FILE" >& 2
+	cmd_failure "$*" $RC
+}
+
+
+quiet_system() {
+	REPLY=`run "$@" 2> "$ELOG_FILE"` && return
+	RC=$?
+	cat "$ELOG_FILE" >& 2
+	cmd_failure "$*" $RC
+}
+
+
+system_bc() {
+	REPLY=`run echo "$*" | run "$BC"` || fail
+}
+
+
+compile_c() {
+	local ACTION OC_TITLE
+	OC_TITLE=$C_TITLE
+	C_TITLE=$1
+	if have src
+	then
+		ACTION="Overwriting $OC_TITLE source code with"
+	else
+		ACTION=Creating
+		system tempfile; C_SRC=$REPLY; got src
+	fi
+	inform "$ACTION $C_TITLE source code."
+	run cat > "$C_SRC"
+	if have bin
+	then
+		ACTION="Overwriting $OC_TITLE binary with"
+	else
+		ACTION=Creating
+		system tempfile; C_BIN=$REPLY; got bin
+	fi
+	inform "$ACTION $C_TITLE binary."
+	quiet_run "$GCC" $ADD_CFLAGS -o "$C_BIN" $ADD_LDFLAGS -x c "$C_SRC"
+	run test -x "$C_BIN"
+}
+
+
+fmt_number() {
+	REPLY=$1x
+	while test x"${REPLY#?????????????}" != xx
+	do
+		REPLY=" $REPLY"
+	done
+	REPLY=${REPLY%?}
+}
+
+
+split_results() {
+	FS=`run echo $REPLY | run cut -d" " -f1` || fail
+	VAL=`run echo $REPLY | run cut -d" " -f$1` || fail
+}
+
+
+stat1() {
+	local BEST WORST VAL
+	LC_ALL=C run sort -k$1gr < "$RESULTS_FILE" > "$TMP_FILE"
+	BEST=`run head -n1 "$TMP_FILE" | run cut -d" " -f$1` || fail
+	WORST=`run tail -n1 "$TMP_FILE" | run cut -d" " -f$1` || fail
+	run echo
+	run echo "$2 - direct values, from best to worst:"
+	while read
+	do
+		split_results $1; fmt_number "$VAL"
+		run echo "$REPLY - $FS"
+	done < "$TMP_FILE"
+	run echo
+	run echo "$2 - as percentage of best:"
+	while read
+	do
+		split_results $1
+		system_bc "scale= 2; $VAL * 100 / $BEST"
+		fmt_number "$REPLY"
+		run echo "$REPLY % - $FS"
+	done < "$TMP_FILE"
+	run echo
+	run echo "$2 - as factor of worst:"
+	while read
+	do
+		split_results $1
+		system_bc "scale= 2; $VAL / $WORST"
+		fmt_number "$REPLY"
+		run echo "$REPLY times - $FS"
+	done < "$TMP_FILE"
+}
+
+
+# Main.
+system date +%s; NOW="--date=@$REPLY"
+APP=${0##*/}; run test -n "$APP"
+
+system date "$NOW" +%Y%m%d-%H%M%S
+REPORT_FILE="${APP}_report_$REPLY.txt"
+run test ! -e "$REPORT_FILE"
+
+system date "$NOW" "+%Y-%m-%d %H:%M:%S"
+run cat << EOF >& 2
+File system performance benchmark.
+$APP version $VERSION started $REPLY.
+All test resources will be created temporarily under '${TMPDIR:-/tmp}' only.
+Final test results will be saved to file '$REPORT_FILE'.
+You can abort the test at any time.
+Total filesystem image size = $IMG_SIZE_MiB MiB.
+Size of each generated file = $TEST_FILE_SIZE bytes.
+EOF
+
+system tempfile; ELOG_FILE=$REPLY; got elog
+
+quiet_system which bc; BC=$REPLY
+quiet_system which gcc; GCC=$REPLY
+
+system tempfile; RESULTS_FILE=$REPLY; got results
+
+compile_c << 'EOF' "temporary directory creator"
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+int main(void) {
+   unsigned long cnt;
+   for (cnt= TMP_MAX; cnt--; ) {
+      char *name= tmpnam(0);
+      if (!mkdir(name, 0)) {
+         (void)puts(name);
+         return EXIT_SUCCESS;
+      }
+   } 
+   return EXIT_FAILURE;
+}
+EOF
+system "$C_BIN"; MPOINT=$REPLY; got mpoint
+inform "Created temporary mount point directory '$MPOINT'."
+
+system tempfile; IMG_FILE=$REPLY; got img
+inform "Creating $IMG_SIZE_MiB MiB image file '$IMG_FILE'."
+quiet_run dd if=/dev/zero of="$IMG_FILE" bs=1M count="$IMG_SIZE_MiB"
+
+system tempfile; TMP_FILE=$REPLY; got tmp
+
+compile_c << 'EOF' "file generator"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <string.h>
+#include <limits.h>
+
+int main(int argc, char **argv) {
+   typedef unsigned long u;
+   size_t test_file_size, prefix_len;
+   double msg_interval, duration;
+   time_t first= (time_t)-1, last, now;
+   char const *prefix, *suffix;
+   char *fname, *buffer;
+   int result= EXIT_FAILURE;
+   u files= 0, cnt= 0;
+   u iv= 1;
+   if (argc != 5) goto cleanup;
+   test_file_size= atol(argv[1]);
+   msg_interval= (double)atol(argv[2]);
+   prefix_len= strlen(prefix= argv[3]); suffix= argv[4];
+   #define MAX_DIGITS(v) ((size_t)(sizeof(v) * CHAR_BIT / 3.3219281) + 1)
+   fname= malloc(prefix_len + MAX_DIGITS(fname) + strlen(suffix) + 1);
+   buffer= malloc(test_file_size);
+   if (!fname || !buffer) goto cleanup;
+   (void)strcpy(fname, prefix);
+   {
+      size_t i;
+      int c= 12;
+      for (i= test_file_size; i--; ) {
+         buffer[i]= (char)(unsigned char)c;
+         c+= 13;
+      }
+   }
+   if (time(&first) == (time_t)-1) goto cleanup;
+   last= first;
+   for (;;) {
+      FILE *fh;
+      u nfi= files + 1;
+      (void)sprintf(fname + prefix_len, "%lu%s", nfi, suffix);
+      fh= fopen(fname, "wb");
+      if (!fh) break;
+      if (fwrite(buffer, 1, test_file_size, fh) != test_file_size) {
+         (void)fclose(fh);
+         break;
+      }
+      if (fclose(fh)) break;
+      /*if (remove(fname)) goto cleanup;*/
+      files= nfi;
+      if (++cnt >= iv) {
+         if (time(&now) == (time_t)-1) goto cleanup;
+         if ((duration= difftime(now, last)) <= 0) {
+            cnt= 0; last= now;
+         } else {
+            iv= (u)(iv * msg_interval / duration + .5);
+            if (iv <= 0) iv= 1;
+            if (duration >= msg_interval || cnt >= iv) {
+               cnt= 0; last= now;
+               (void)fprintf(stderr, "%lu... ", files);
+               (void)fflush(stderr);
+            }
+         }
+      }
+   }
+   result= EXIT_SUCCESS;
+   cleanup:
+   if (first != (time_t)-1 && time(&now) != (time_t)-1) {
+      if ((duration= difftime(now, first)) <= 0) duration= 1;
+   } else duration= 0;
+   (void)fprintf(stderr, "%lu files in %lu seconds.\n", files, (u)duration);
+   (void)printf("%lu:%lu\n", files, (u)duration);
+   if (buffer) free(buffer);
+   if (fname) free(fname);
+   return result;
+}
+EOF
+free src
+
+system losetup -f; FREE_LOOP=$REPLY
+run test -b "$FREE_LOOP"
+system read_test "$FREE_LOOP"; run test x"$REPLY" = x0
+inform "Attaching image file to free loop device $FREE_LOOP."
+run losetup "$FREE_LOOP" "$IMG_FILE"; got loop
+
+FS_INDEX=0
+while :
+do
+	calc $FS_INDEX + 1; FS_INDEX=$REPLY
+	enum_potential_filesystems
+	test -z "$FS" && break
+	test -z "$FCMD" && FCMD=mkfs.$FS
+	test -z "$KMOD" && KMOD=$FS
+	have_command "$FCMD" || continue
+	have_fs "$FS" || {
+		modprobe "$KMOD" 2> /dev/null
+		sleep 1
+		have_fs "$FS" || continue
+		got fs
+		inform "Loaded kernel module '$FS'."
+	}
+	inform "*** Testing filesystem '$FS' - formatting $FREE_LOOP..."
+	quiet_run "$FCMD" $FOPT "$FREE_LOOP"
+	inform "Mounting filesystem."
+	quiet_run mount -t "$FS" $MOPT "$FREE_LOOP" "$MPOINT"
+	got mnt
+	inform "Creating as many files as possible" \
+		"of size $TEST_FILE_SIZE bytes..."
+	system "$C_BIN" "$TEST_FILE_SIZE" "$STILL_ALIVE_MSG_INTERVAL" \
+		"$MPOINT/$TEST_FILE_PREFIX" "$TEST_FILE_SUFFIX"
+	FILES=${REPLY%:*}; SECS=${REPLY#*:}
+	system_bc "scale= 4; " \
+		"v= $FILES * $TEST_FILE_SIZE " \
+		"/ ($IMG_SIZE_MiB * 1024 * 1024) * 100 * 100; " \
+		"scale= 2; v / 100"; SPEFF=$REPLY
+	system_bc "scale= 2; $FILES / $SECS"; SPEED=$REPLY
+	inform "+++ Created $FILES files in $SECS seconds" \
+		"($SPEED files/second)."
+	inform "+++ Space usage efficiency is $SPEFF %."
+	echo $FS $SPEFF $SPEED >> "$RESULTS_FILE"
+	free mnt
+	have fs && free fs
+done
+inform "All tests complete."
+free_all_but results tmp
+inform ""
+inform "Summary of results:"
+{
+	system date "$NOW" "+%Y-%m-%d %H:%M:%S"
+	run cat <<- .
+	Filesystem statistics report
+	Generated $REPLY by $APP version $VERSION:
+	
+	Total filesystem image size = $IMG_SIZE_MiB MiB.
+	Size of each generated file = $TEST_FILE_SIZE bytes.
+.
+	stat1 2 "space usage efficiency"
+	stat1 3 "files / second"
+	run cat <<- .
+
+	$APP (c) 2010 by Guenther Brunthaler.
+
+	$APP is free software.
+	Distribution is permitted under the terms of the GPLv3.
+.
+} | run tee "$REPORT_FILE"
+inform "A copy of the results has been written to file '$REPORT_FILE'."
