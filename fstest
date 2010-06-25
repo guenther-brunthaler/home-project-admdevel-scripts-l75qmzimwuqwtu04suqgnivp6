@@ -17,7 +17,7 @@ TEST_FILE_PREFIX=file_
 TEST_FILE_SUFFIX=
 ADD_CFLAGS="-O3 -pipe -DNDEBUG -s"
 ADD_LDFLAGS="-lm"
-VERSION=10.175.2
+VERSION=10.175.3
 
 
 # Edit this function to add support for more filesystems.
@@ -44,15 +44,23 @@ enum_potential_filesystems() {
 }
 
 
+# Sets $RC to error code or just to 'false' if $? == 0.
+# A nonzero argument, if given, overrides the return code.
+# Exits the application with that return code unless in
+# unwinding (exit trap cleanup) mode.
 fail() {
-	test -z "$UNWIND" && { false; exit; }
-	false
+	RC=$?
+	test -n "$1" && RC=$1
+	test $RC = 0 && { false; RC=$?; }
+	test -z "$UNWIND" && exit $RC
+	return $RC
 }
 
 
 die() {
+	RC=$?
 	echo "ERROR: $*" >& 2
-	fail
+	fail $RC
 }
 
 
@@ -62,13 +70,12 @@ cmd_failure() {
 
 
 run() {
-	"$@" && return
-	cmd_failure "$*" $?
+	"$@" ||	cmd_failure "$*" $?
 }
 
 
 system() {
-	REPLY=`run "$@"` || fail
+	REPLY=`UNWIND= run "$@"` || fail
 }
 
 
@@ -136,10 +143,9 @@ inform() {
 
 calc() {
 	local RC
-	set -- expr "$@"
-	REPLY=`"$@"`; RC=$?
+	system expr "$@"
 	case $RC in
-		0) ;;
+		"") ;;
 		1) false;;
 		*) cmd_failure "$@" "$RC";;
 	esac
@@ -233,7 +239,7 @@ quiet_run() {
 
 
 quiet_system() {
-	REPLY=`run "$@" 2> "$ELOG_FILE"` && return
+	REPLY=`UNWIND= run "$@" 2> "$ELOG_FILE"` && return
 	RC=$?
 	cat "$ELOG_FILE" >& 2
 	cmd_failure "$*" $RC
@@ -241,7 +247,7 @@ quiet_system() {
 
 
 system_bc() {
-	REPLY=`run echo "$*" | run "$BC"` || fail
+	REPLY=`UNWIND=; export UNWIND; run echo "$*" | run "$BC"` || fail
 }
 
 
@@ -281,9 +287,20 @@ fmt_number() {
 }
 
 
+print_field() {
+	run printf '%s\n' "$1" | run cut -d" " -f$2
+}
+
+
 split_results() {
-	FS=`run echo $REPLY | run cut -d" " -f1` || fail
-	VAL=`run echo $REPLY | run cut -d" " -f$1` || fail
+	local LINE; LINE=$REPLY; local REPLY
+	system print_field "$LINE" 1; FS=$REPLY
+	system print_field "$LINE" "$1"; VAL=$REPLY
+}
+
+
+print_extreme() {
+	run "$1" -n1 "$TMP_FILE" | run cut -d" " -f$COL
 }
 
 
@@ -293,8 +310,8 @@ stat1() {
 	test $DIR = A && VAL=r
 	set -- sort -k${COL}g$VAL
 	LC_ALL=C run "$@" < "$RESULTS_FILE" > "$TMP_FILE"
-	BEST=`run head -n1 "$TMP_FILE" | run cut -d" " -f$COL` || fail
-	WORST=`run tail -n1 "$TMP_FILE" | run cut -d" " -f$COL` || fail
+	system print_extreme head; BEST=$REPLY
+	system print_extreme tail; WORST=$REPLY
 	test $DIR = D && {
 		VAL=$BEST; BEST=$WORST; WORST=$VAL
 		VAL=$BLBL; BLBL=$WLBL; WLBL=$VAL
@@ -431,8 +448,10 @@ int main(int argc, char **argv) {
       files= nfi;
       if (++cnt >= iv) {
          if (time(&now) == (time_t)-1) goto cleanup;
-         if ((duration= difftime(now, last)) <= 0) {
+         if ((duration= difftime(now, last)) < 0) {
             cnt= 0; last= now;
+         } else if ((u)duration == 0) {
+            iv<<= 1;
          } else {
             iv= (u)(iv * msg_interval / duration + .5);
             if (iv <= 0) iv= 1;
