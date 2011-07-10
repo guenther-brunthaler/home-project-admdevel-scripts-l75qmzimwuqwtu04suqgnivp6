@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # Reads lines where some start with frame numbers from STDIN.
 # Adds absolute frame numbers to the existing ones,
 # which are assumed to be sizes of video segments

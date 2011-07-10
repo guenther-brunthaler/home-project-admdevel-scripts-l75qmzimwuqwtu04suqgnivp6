@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # Reads lines where some start with page numbers from STDIN.
 # Adds absolute page numbers to the existing ones,
 # which are assumed to be page counts of chapters

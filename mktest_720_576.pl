@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # Creates a raw 8-bit gray test bitmap (colors 0 and 0xff only)
 # consisting of a 720 x 576 image that can be used to test
 # raster line integrity when converting video formats.

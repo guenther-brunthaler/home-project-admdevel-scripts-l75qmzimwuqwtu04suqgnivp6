@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # List movies.
 # $Id: /trunk/Org/SysAdmin/Crossplatform/scripts/movie_list.pl 2645 2006-08-26T07:36:02.660558Z gb  $
 

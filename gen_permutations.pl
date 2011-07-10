@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 @p= qw/x x x M M/;
 for ($n= 1;;) {
    for ($i= $#p;; --$i) {

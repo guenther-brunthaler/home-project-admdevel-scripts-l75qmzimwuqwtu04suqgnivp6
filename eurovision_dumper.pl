@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # ESC Wikipedia table songlist dumper.
 
 

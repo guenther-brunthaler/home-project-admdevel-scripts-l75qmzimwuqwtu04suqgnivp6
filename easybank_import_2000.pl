@@ -1,3 +1,4 @@
+#! /usr/bin/perl
 # Easybank year 2000 import.
 
 
