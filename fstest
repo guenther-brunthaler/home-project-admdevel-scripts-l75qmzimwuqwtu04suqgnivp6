@@ -318,14 +318,14 @@ stat1() {
 	}
 	run echo
 	run echo "$TITLE - direct values, from best to worst:"
-	while read
+	while read REPLY
 	do
 		split_results $COL; fmt_number "$VAL"
 		run echo "$REPLY - $FS"
 	done < "$TMP_FILE"
 	run echo
 	run echo "$TITLE - as percentage of $BLBL:"
-	while read
+	while read REPLY
 	do
 		split_results $COL
 		system_bc "scale= 2; $VAL * 100 / $BEST"
@@ -334,7 +334,7 @@ stat1() {
 	done < "$TMP_FILE"
 	run echo
 	run echo "$TITLE - as factor of $WLBL:"
-	while read
+	while read REPLY
 	do
 		split_results $COL
 		system_bc "scale= 2; $VAL / $WORST"
